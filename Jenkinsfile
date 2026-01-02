@@ -1,74 +1,55 @@
 pipeline {
-    agent any
+  agent any
 
-    environment {
-        AWS_DEFAULT_REGION = "ap-south-1"
-        CLUSTER_NAME = "trend-cluster"
-        IMAGE_NAME = "vaith/trend-app"
-        IMAGE_TAG = "latest"
+  environment {
+    AWS_DEFAULT_REGION = "ap-south-1"
+    EKS_CLUSTER = "trend-cluster"
+    IMAGE_NAME = "vaith/trend-app:latest"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
     }
 
-    stages {
-
-        stage('Checkout Code') {
-            steps {
-                git branch: 'main',
-                    url: 'https://github.com/Vaitheswaran05/Trend_app.git'
-            }
-        }
-
-        stage('Build Docker Image') {
-            steps {
-                sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG .'
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'Doc_hub',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
-                    sh '''
-                      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker push $IMAGE_NAME:$IMAGE_TAG
-                    '''
-                }
-            }
-        }
-
-        stage('Configure AWS + kubeconfig') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-eks-creds',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-                    sh '''
-                      aws sts get-caller-identity
-
-                      aws eks update-kubeconfig \
-                        --region $AWS_DEFAULT_REGION \
-                        --name $CLUSTER_NAME
-
-                      kubectl get nodes
-                    '''
-                }
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                sh '''
-                  kubectl apply -f K8s/deployment.yaml
-                  kubectl apply -f K8s/service.yaml
-                '''
-            }
-        }
+    stage('Build Docker Image') {
+      steps {
+        sh 'docker build -t $IMAGE_NAME .'
+      }
     }
+
+    stage('Push Docker Image') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'Doc_hub',
+          usernameVariable: 'DOCKER_USER',
+          passwordVariable: 'DOCKER_PASS'
+        )]) {
+          sh '''
+            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+            docker push $IMAGE_NAME
+          '''
+        }
+      }
+    }
+
+    stage('Configure AWS & Deploy to EKS') {
+      steps {
+        withCredentials([
+          string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+          string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws sts get-caller-identity
+            aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $EKS_CLUSTER
+            kubectl apply -f K8s/deployment.yaml --validate=false
+            kubectl apply -f K8s/service.yaml --validate=false
+          '''
+        }
+      }
+    }
+  }
 }
